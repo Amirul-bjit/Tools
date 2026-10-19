@@ -1,0 +1,1280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CSV Viewer &amp; Editor</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --border: #d8dce1;
+    --text: #1c2128;
+    --text-dim: #5b6472;
+    --accent: #2f6fed;
+    --accent-text: #ffffff;
+    --row-alt: #fafbfc;
+    --row-hover: #eef3ff;
+    --danger: #d33b3b;
+    --header-bg: #eef1f5;
+    --shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1d22;
+      --panel: #22262c;
+      --border: #383e46;
+      --text: #e6e8eb;
+      --text-dim: #9aa3ad;
+      --accent: #5b8dfb;
+      --accent-text: #0d1117;
+      --row-alt: #262a31;
+      --row-hover: #2a3140;
+      --danger: #ff6b6b;
+      --header-bg: #2a2f36;
+      --shadow: 0 1px 3px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+  }
+  body.selecting, body.filling {
+    cursor: crosshair;
+  }
+  body.selecting *, body.filling * {
+    user-select: none !important;
+  }
+  #dropOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(47,111,237,.12);
+    border: 3px dashed var(--accent);
+    z-index: 50;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: var(--accent);
+    font-weight: 600;
+    pointer-events: none;
+  }
+  body.dragging #dropOverlay { display: flex; }
+
+  header {
+    padding: 10px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 15px;
+    margin: 0 12px 0 0;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .toolbar .group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding-right: 10px;
+    border-right: 1px solid var(--border);
+  }
+  .toolbar .group:last-child { border-right: none; }
+
+  button, .file-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+  button:hover, .file-btn:hover { background: var(--row-hover); }
+  button:active { transform: translateY(1px); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+  input[type=text], input[type=number], select, textarea {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12.5px;
+    font-family: inherit;
+  }
+  label.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 12.5px; white-space: nowrap; }
+
+  #fileInput { display: none; }
+
+  #searchBox { width: 200px; }
+
+  #clipHelper {
+    position: fixed;
+    top: -9999px;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    padding: 0;
+    border: none;
+    resize: none;
+  }
+
+  main {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    padding: 0;
+  }
+  #emptyState {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: var(--text-dim);
+    text-align: center;
+    padding: 20px;
+  }
+  #emptyState .big { font-size: 16px; color: var(--text); font-weight: 600; }
+  #emptyState .hint { max-width: 420px; font-size: 12.5px; }
+
+  table {
+    border-collapse: collapse;
+    width: max-content;
+    min-width: 100%;
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--header-bg);
+    z-index: 3;
+    border: 1px solid var(--border);
+    padding: 0;
+    user-select: none;
+  }
+  thead th.corner {
+    left: 0;
+    z-index: 4;
+    width: 42px;
+    min-width: 42px;
+    text-align: center;
+    color: var(--text-dim);
+  }
+  .col-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 8px;
+    cursor: pointer;
+    min-width: 120px;
+  }
+  .col-head .col-label {
+    font-weight: 700;
+    padding: 2px 3px;
+    width: 100%;
+    text-align: center;
+    color: var(--text);
+  }
+  .col-head .sort-ind { font-size: 10px; color: var(--accent); width: 10px; }
+  .col-head.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .col-del {
+    opacity: 0;
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .col-head:hover .col-del { opacity: 1; }
+
+  tbody td {
+    border: 1px solid var(--border);
+    padding: 0;
+    vertical-align: top;
+    position: relative;
+  }
+  tbody td.rownum {
+    position: sticky;
+    left: 0;
+    background: var(--header-bg);
+    color: var(--text-dim);
+    text-align: center;
+    width: 42px;
+    min-width: 42px;
+    font-variant-numeric: tabular-nums;
+    z-index: 1;
+    cursor: pointer;
+  }
+  tbody tr:nth-child(even) td { background: var(--row-alt); }
+  tbody tr:nth-child(even) td.rownum { background: var(--header-bg); }
+  tbody tr:hover td { background: var(--row-hover); }
+  tbody tr:hover td.rownum { background: var(--row-hover); }
+  tbody tr.row-selected td.rownum { background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--text); font-weight: 700; }
+
+  .cell-view {
+    display: block;
+    width: 100%;
+    min-width: 120px;
+    min-height: 18px;
+    padding: 6px 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: cell;
+  }
+  .cell-edit {
+    display: block;
+    width: 100%;
+    min-width: 120px;
+    border: none;
+    background: transparent;
+    padding: 6px 8px;
+    color: var(--text);
+    font: inherit;
+    resize: none;
+    overflow: hidden;
+  }
+  .cell-edit:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    background: var(--panel);
+  }
+  td.sel-range { background: color-mix(in srgb, var(--accent) 16%, transparent) !important; }
+  td.sel-active { outline: 2px solid var(--accent); outline-offset: -2px; z-index: 2; background: color-mix(in srgb, var(--accent) 8%, transparent) !important; }
+  td.fill-preview { outline: 2px dashed var(--accent); outline-offset: -2px; z-index: 2; }
+  .cell-match .cell-view { background: color-mix(in srgb, #ffd54a 55%, transparent); }
+
+  .fill-handle {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    right: -4px;
+    bottom: -4px;
+    background: var(--accent);
+    border: 1px solid var(--panel);
+    border-radius: 1px;
+    cursor: crosshair;
+    z-index: 4;
+  }
+
+  footer {
+    padding: 6px 14px;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #pasteModal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.35);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    padding: 20px;
+  }
+  #pasteModal.open { display: flex; }
+  .modal-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    width: min(680px, 100%);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .modal-box h2 { margin: 0; font-size: 15px; }
+  .modal-box textarea {
+    width: 100%;
+    height: 220px;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .toast {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--text);
+    color: var(--bg);
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 12.5px;
+    box-shadow: var(--shadow);
+    z-index: 70;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div id="dropOverlay">Drop CSV file to load</div>
+
+<header>
+  <h1>CSV Viewer &amp; Editor</h1>
+  <span id="fileNameLabel" style="color:var(--text-dim); font-size:12.5px;"></span>
+</header>
+
+<div class="toolbar">
+  <div class="group">
+    <label class="file-btn">
+      Open CSV
+      <input type="file" id="fileInput" accept=".csv,.tsv,.txt,text/csv" />
+    </label>
+    <button id="pasteBtn">Paste text</button>
+  </div>
+  <div class="group">
+    <label class="chk">Delimiter
+      <select id="delimiterSelect">
+        <option value="auto">Auto</option>
+        <option value=",">Comma ,</option>
+        <option value=";">Semicolon ;</option>
+        <option value="\t">Tab</option>
+        <option value="|">Pipe |</option>
+      </select>
+    </label>
+  </div>
+  <div class="group">
+    <button id="addRowBtn" disabled>+ Row</button>
+    <button id="addColBtn" disabled>+ Column</button>
+    <button id="delRowBtn" disabled class="danger">Delete row</button>
+    <button id="delColBtn" disabled class="danger">Delete column</button>
+  </div>
+  <div class="group">
+    <button id="undoBtn" disabled>Undo</button>
+  </div>
+  <div class="group">
+    <input type="text" id="searchBox" placeholder="Search all cells…" disabled />
+    <span id="searchCount" style="color:var(--text-dim); font-size:12px;"></span>
+  </div>
+  <div class="group" style="border-right:none; margin-left:auto;">
+    <button id="exportBtn" class="primary" disabled>💾 Save / Download CSV</button>
+  </div>
+</div>
+
+<main>
+  <div id="emptyState">
+    <div class="big">No CSV loaded</div>
+    <div class="hint">Open a file, drag &amp; drop a .csv/.tsv anywhere on this page, or paste CSV text to get started. Everything runs locally in your browser — nothing is uploaded anywhere.</div>
+    <button id="emptyPasteBtn">Paste CSV text</button>
+  </div>
+  <table id="grid" style="display:none;">
+    <thead><tr id="headRow"></tr></thead>
+    <tbody id="bodyRows"></tbody>
+  </table>
+</main>
+
+<footer>
+  <span id="statsLabel">No data</span>
+  <span id="hintLabel">Drag across cells to select a range · Ctrl+C / Ctrl+V to copy-paste (works with Excel) · drag the blue square to fill · double-click or type to edit</span>
+</footer>
+
+<div id="pasteModal">
+  <div class="modal-box">
+    <h2>Paste CSV / TSV text</h2>
+    <textarea id="pasteArea" placeholder="col1,col2,col3&#10;a,b,c"></textarea>
+    <div class="modal-actions">
+      <button id="pasteCancel">Cancel</button>
+      <button id="pasteLoad" class="primary">Load</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<textarea id="clipHelper" tabindex="-1" aria-hidden="true"></textarea>
+
+<script>
+(function () {
+  "use strict";
+
+  var state = {
+    headers: [],
+    rows: [],
+    delimiter: ",",
+    hasHeader: false,
+    fileName: "data.csv",
+    sortCol: -1,
+    sortDir: 1,
+    selectedCol: -1,
+    selectedRows: new Set(),
+    selection: null,      // {r1,c1,r2,c2} normalized rectangle over state.rows
+    activeCell: null,     // {r,c} anchor cell for editing / typing
+    editing: null,        // {r,c} when a cell is in edit mode
+    isMouseSelecting: false,
+    isFilling: false,
+    fillBase: null,
+    fillPreview: null
+  };
+  var undoStack = [];
+
+  function snapshot() {
+    return {
+      headers: state.headers.slice(),
+      rows: state.rows.map(function (r) { return r.slice(); })
+    };
+  }
+  function pushUndo() {
+    undoStack.push(snapshot());
+    if (undoStack.length > 30) undoStack.shift();
+    undoBtn.disabled = false;
+  }
+  function undo() {
+    if (!undoStack.length) return;
+    var snap = undoStack.pop();
+    state.headers = snap.headers;
+    state.rows = snap.rows;
+    state.selectedRows.clear();
+    state.selectedCol = -1;
+    state.selection = null;
+    state.activeCell = null;
+    undoBtn.disabled = undoStack.length === 0;
+    render();
+    toast("Undone");
+  }
+
+  // ---------- CSV parse / serialize ----------
+  function detectDelimiter(text) {
+    var sample = text.split(/\r\n|\n/).slice(0, 5).join("\n");
+    var candidates = [",", ";", "\t", "|"];
+    var best = ",", bestCount = -1;
+    candidates.forEach(function (d) {
+      var count = sample.split(d).length;
+      if (count > bestCount) { bestCount = count; best = d; }
+    });
+    return best;
+  }
+
+  function parseCSV(text, delimiter) {
+    var rows = [];
+    var row = [];
+    var field = "";
+    var inQuotes = false;
+    var i = 0;
+    var len = text.length;
+    while (i < len) {
+      var c = text[i];
+      if (inQuotes) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+          inQuotes = false; i++; continue;
+        }
+        field += c; i++; continue;
+      } else {
+        if (c === '"') { inQuotes = true; i++; continue; }
+        if (c === delimiter) { row.push(field); field = ""; i++; continue; }
+        if (c === "\r") { i++; continue; }
+        if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+        field += c; i++; continue;
+      }
+    }
+    row.push(field);
+    if (row.length > 1 || row[0] !== "") rows.push(row);
+    while (rows.length && rows[rows.length - 1].every(function (v) { return v === ""; })) rows.pop();
+    return rows;
+  }
+
+  function needsQuote(val, delimiter) {
+    return /["\r\n]/.test(val) || val.indexOf(delimiter) !== -1;
+  }
+  function escapeField(val, delimiter) {
+    val = val == null ? "" : String(val);
+    if (needsQuote(val, delimiter)) return '"' + val.replace(/"/g, '""') + '"';
+    return val;
+  }
+  function toCSV(headers, rows, delimiter, hasHeader) {
+    var lines = [];
+    if (hasHeader) lines.push(headers.map(function (h) { return escapeField(h, delimiter); }).join(delimiter));
+    rows.forEach(function (r) {
+      lines.push(r.map(function (v) { return escapeField(v, delimiter); }).join(delimiter));
+    });
+    return lines.join("\r\n");
+  }
+
+  // 0 -> A, 25 -> Z, 26 -> AA, 51 -> AZ, 52 -> BA ...
+  function colName(i) {
+    var s = "";
+    for (i += 1; i > 0; i = Math.floor((i - 1) / 26)) {
+      s = String.fromCharCode(65 + ((i - 1) % 26)) + s;
+    }
+    return s;
+  }
+  function relabelHeaders() {
+    state.headers = state.headers.map(function (_, i) { return colName(i); });
+  }
+
+  function normalizeRectangular(rawRows) {
+    var colCount = rawRows.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+    var headers = [];
+    var dataRows = rawRows.slice();
+    while (headers.length < colCount) headers.push(colName(headers.length));
+    dataRows = dataRows.map(function (r) {
+      r = r.slice();
+      while (r.length < colCount) r.push("");
+      return r;
+    });
+    return { headers: headers, rows: dataRows };
+  }
+
+  // ---------- Loading ----------
+  function loadText(text, fileName) {
+    var delimSel = delimiterSelect.value;
+    var delim = delimSel === "auto" ? detectDelimiter(text) : (delimSel === "\\t" ? "\t" : delimSel);
+    state.delimiter = delim;
+    var raw = parseCSV(text, delim);
+    if (!raw.length) { toast("Nothing to load — file looks empty"); return; }
+    var norm = normalizeRectangular(raw);
+    state.headers = norm.headers;
+    state.rows = norm.rows;
+    state.hasHeader = false;
+    state.fileName = fileName || state.fileName || "data.csv";
+    state.sortCol = -1;
+    state.selectedCol = -1;
+    state.selectedRows.clear();
+    state.selection = null;
+    state.activeCell = null;
+    state.editing = null;
+    undoStack = [];
+    undoBtn.disabled = true;
+    fileNameLabel.textContent = state.fileName;
+    setControlsEnabled(true);
+    render();
+    toast("Loaded " + state.rows.length + " rows × " + state.headers.length + " columns");
+  }
+
+  function setControlsEnabled(on) {
+    [addRowBtn, addColBtn, delRowBtn, delColBtn, searchBox, exportBtn].forEach(function (el) { el.disabled = !on; });
+    emptyState.style.display = on ? "none" : "flex";
+    grid.style.display = on ? "table" : "none";
+  }
+
+  // ---------- DOM refs ----------
+  var headRow = document.getElementById("headRow");
+  var bodyRows = document.getElementById("bodyRows");
+  var grid = document.getElementById("grid");
+  var emptyState = document.getElementById("emptyState");
+  var fileNameLabel = document.getElementById("fileNameLabel");
+  var statsLabel = document.getElementById("statsLabel");
+  var searchBox = document.getElementById("searchBox");
+  var searchCount = document.getElementById("searchCount");
+
+  var addRowBtn = document.getElementById("addRowBtn");
+  var addColBtn = document.getElementById("addColBtn");
+  var delRowBtn = document.getElementById("delRowBtn");
+  var delColBtn = document.getElementById("delColBtn");
+  var undoBtn = document.getElementById("undoBtn");
+  var exportBtn = document.getElementById("exportBtn");
+  var delimiterSelect = document.getElementById("delimiterSelect");
+  var fileInput = document.getElementById("fileInput");
+  var pasteBtn = document.getElementById("pasteBtn");
+  var emptyPasteBtn = document.getElementById("emptyPasteBtn");
+  var pasteModal = document.getElementById("pasteModal");
+  var pasteArea = document.getElementById("pasteArea");
+  var pasteCancel = document.getElementById("pasteCancel");
+  var pasteLoad = document.getElementById("pasteLoad");
+  var toastEl = document.getElementById("toast");
+  var clipHelper = document.getElementById("clipHelper");
+
+  var toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 1800);
+  }
+
+  function normSel(a, b) {
+    return {
+      r1: Math.min(a.r, b.r), r2: Math.max(a.r, b.r),
+      c1: Math.min(a.c, b.c), c2: Math.max(a.c, b.c)
+    };
+  }
+  function focusClipHelper() {
+    clipHelper.value = " ";
+    clipHelper.focus({ preventScroll: true });
+    clipHelper.select();
+  }
+
+  function render() {
+    renderHead();
+    renderBody();
+    updateStats();
+    updateSearch();
+  }
+
+  function renderHead() {
+    headRow.innerHTML = "";
+    var corner = document.createElement("th");
+    corner.className = "corner";
+    corner.textContent = "#";
+    headRow.appendChild(corner);
+    state.headers.forEach(function (h, ci) {
+      var th = document.createElement("th");
+      var wrap = document.createElement("div");
+      wrap.className = "col-head" + (state.selectedCol === ci ? " selected" : "");
+      var ind = document.createElement("span");
+      ind.className = "sort-ind";
+      ind.textContent = state.sortCol === ci ? (state.sortDir === 1 ? "▲" : "▼") : "";
+      var input = document.createElement("span");
+      input.className = "col-label";
+      input.textContent = h;
+      var del = document.createElement("button");
+      del.className = "col-del";
+      del.textContent = "✕";
+      del.title = "Delete column";
+      del.addEventListener("click", function (e) {
+        e.stopPropagation();
+        deleteColumn(ci);
+      });
+      wrap.appendChild(ind);
+      wrap.appendChild(input);
+      wrap.appendChild(del);
+      wrap.addEventListener("click", function () {
+        if (state.selectedCol === ci) {
+          sortByColumn(ci);
+        } else {
+          state.selectedCol = ci;
+          delColBtn.disabled = false;
+          if (state.rows.length) {
+            state.selection = { r1: 0, c1: ci, r2: state.rows.length - 1, c2: ci };
+            state.activeCell = { r: 0, c: ci };
+            focusClipHelper();
+          }
+          render();
+        }
+      });
+      th.appendChild(wrap);
+      headRow.appendChild(th);
+    });
+  }
+
+  function renderBody() {
+    bodyRows.innerHTML = "";
+    var q = searchBox.value.trim().toLowerCase();
+    state.rows.forEach(function (row, ri) {
+      var visible = true;
+      if (q) {
+        visible = row.some(function (v) { return String(v).toLowerCase().indexOf(q) !== -1; });
+      }
+      var tr = document.createElement("tr");
+      tr.dataset.ri = ri;
+      if (!visible) tr.style.display = "none";
+      if (state.selectedRows.has(ri)) tr.classList.add("row-selected");
+
+      var numTd = document.createElement("td");
+      numTd.className = "rownum";
+      var numSpan = document.createElement("span");
+      numSpan.className = "num";
+      numSpan.textContent = ri + 1;
+      numTd.appendChild(numSpan);
+      numTd.title = "Click to select row (for delete), double-click to delete";
+      numTd.addEventListener("click", function () { toggleRowSelect(ri); });
+      numTd.addEventListener("dblclick", function () { deleteRow(ri); });
+      tr.appendChild(numTd);
+
+      row.forEach(function (val, ci) {
+        var td = document.createElement("td");
+        td.className = "data-cell";
+        td.dataset.ri = ri;
+        td.dataset.ci = ci;
+        if (q && String(val).toLowerCase().indexOf(q) !== -1) td.classList.add("cell-match");
+
+        var isEditing = state.editing && state.editing.r === ri && state.editing.c === ci;
+        if (isEditing) {
+          var ta = document.createElement("textarea");
+          ta.className = "cell-edit";
+          ta.rows = 1;
+          ta.value = state.editing.initial !== undefined ? state.editing.initial : val;
+          ta.spellcheck = false;
+          ta.addEventListener("input", function () { autoGrow(ta); });
+          ta.addEventListener("blur", function () { commitEdit(); });
+          ta.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commitEdit(); moveActiveCell(1, 0, false); }
+            else if (e.key === "Tab") { e.preventDefault(); commitEdit(); moveActiveCell(0, e.shiftKey ? -1 : 1, false); }
+            else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+            e.stopPropagation();
+          });
+          td.appendChild(ta);
+        } else {
+          var div = document.createElement("div");
+          div.className = "cell-view";
+          div.textContent = val;
+          div.addEventListener("mousedown", function (e) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            if (state.editing) commitEdit();
+            state.selection = { r1: ri, c1: ci, r2: ri, c2: ci };
+            state.activeCell = { r: ri, c: ci };
+            state.isMouseSelecting = true;
+            document.body.classList.add("selecting");
+            focusClipHelper();
+            applySelectionHighlight();
+          });
+          div.addEventListener("dblclick", function () {
+            beginEdit(ri, ci);
+          });
+          td.appendChild(div);
+        }
+
+        if (state.selection) {
+          var s = state.selection;
+          if (ri >= s.r1 && ri <= s.r2 && ci >= s.c1 && ci <= s.c2) td.classList.add("sel-range");
+        }
+        if (state.activeCell && state.activeCell.r === ri && state.activeCell.c === ci) {
+          td.classList.add("sel-active");
+        }
+        if (state.selection && state.selection.r2 === ri && state.selection.c2 === ci && !isEditing) {
+          var handle = document.createElement("div");
+          handle.className = "fill-handle";
+          handle.addEventListener("mousedown", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            state.isFilling = true;
+            state.fillBase = { r1: state.selection.r1, c1: state.selection.c1, r2: state.selection.r2, c2: state.selection.c2 };
+            state.fillPreview = null;
+            document.body.classList.add("filling");
+          });
+          td.appendChild(handle);
+        }
+
+        td.addEventListener("mouseenter", function () {
+          if (state.isMouseSelecting) {
+            state.selection = normSel(state.activeCell, { r: ri, c: ci });
+            applySelectionHighlight();
+          } else if (state.isFilling) {
+            updateFillPreview(ri, ci);
+          }
+        });
+
+        tr.appendChild(td);
+      });
+      bodyRows.appendChild(tr);
+    });
+    if (state.editing) {
+      var editTa = bodyRows.querySelector(".cell-edit");
+      if (editTa) {
+        editTa.focus();
+        var len = editTa.value.length;
+        editTa.setSelectionRange(len, len);
+        autoGrow(editTa);
+      }
+    }
+  }
+
+  function applySelectionHighlight() {
+    var cells = bodyRows.querySelectorAll("td.data-cell");
+    cells.forEach(function (td) {
+      var ri = Number(td.dataset.ri), ci = Number(td.dataset.ci);
+      td.classList.remove("sel-range", "sel-active");
+      var existingHandle = td.querySelector(".fill-handle");
+      if (existingHandle) existingHandle.remove();
+      if (state.selection) {
+        var s = state.selection;
+        if (ri >= s.r1 && ri <= s.r2 && ci >= s.c1 && ci <= s.c2) td.classList.add("sel-range");
+      }
+      if (state.activeCell && state.activeCell.r === ri && state.activeCell.c === ci) {
+        td.classList.add("sel-active");
+      }
+      if (state.selection && state.selection.r2 === ri && state.selection.c2 === ci) {
+        var handle = document.createElement("div");
+        handle.className = "fill-handle";
+        handle.addEventListener("mousedown", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          state.isFilling = true;
+          state.fillBase = { r1: state.selection.r1, c1: state.selection.c1, r2: state.selection.r2, c2: state.selection.c2 };
+          state.fillPreview = null;
+          document.body.classList.add("filling");
+        });
+        td.appendChild(handle);
+      }
+    });
+    updateStats();
+  }
+
+  function updateFillPreview(hoverR, hoverC) {
+    var base = state.fillBase;
+    var dRow = hoverR > base.r2 ? hoverR - base.r2 : (hoverR < base.r1 ? hoverR - base.r1 : 0);
+    var dCol = hoverC > base.c2 ? hoverC - base.c2 : (hoverC < base.c1 ? hoverC - base.c1 : 0);
+    var target;
+    if (Math.abs(dRow) >= Math.abs(dCol)) {
+      var r2 = Math.max(base.r2, hoverR);
+      var r1 = Math.min(base.r1, dRow < 0 ? hoverR : base.r1);
+      target = { r1: r1, c1: base.c1, r2: r2, c2: base.c2 };
+    } else {
+      var c2 = Math.max(base.c2, hoverC);
+      var c1 = Math.min(base.c1, dCol < 0 ? hoverC : base.c1);
+      target = { r1: base.r1, c1: c1, r2: base.r2, c2: c2 };
+    }
+    state.fillPreview = target;
+    var cells = bodyRows.querySelectorAll("td.data-cell");
+    cells.forEach(function (td) {
+      var ri = Number(td.dataset.ri), ci = Number(td.dataset.ci);
+      var inTarget = ri >= target.r1 && ri <= target.r2 && ci >= target.c1 && ci <= target.c2;
+      var inBase = ri >= base.r1 && ri <= base.r2 && ci >= base.c1 && ci <= base.c2;
+      td.classList.toggle("fill-preview", inTarget && !inBase);
+    });
+  }
+
+  function finishFill() {
+    document.body.classList.remove("filling");
+    var base = state.fillBase, target = state.fillPreview;
+    state.isFilling = false;
+    state.fillBase = null;
+    if (!target) { render(); return; }
+    pushUndo();
+    var baseRows = base.r2 - base.r1 + 1;
+    var baseCols = base.c2 - base.c1 + 1;
+    ensureRowsCols(target.r2 + 1, target.c2 + 1);
+    for (var r = target.r1; r <= target.r2; r++) {
+      for (var c = target.c1; c <= target.c2; c++) {
+        if (r >= base.r1 && r <= base.r2 && c >= base.c1 && c <= base.c2) continue;
+        var srcR = base.r1 + (((r - base.r1) % baseRows) + baseRows) % baseRows;
+        var srcC = base.c1 + (((c - base.c1) % baseCols) + baseCols) % baseCols;
+        state.rows[r][c] = state.rows[srcR][srcC];
+      }
+    }
+    state.selection = { r1: target.r1, c1: target.c1, r2: target.r2, c2: target.c2 };
+    state.activeCell = { r: target.r1, c: target.c1 };
+    state.fillPreview = null;
+    render();
+    focusClipHelper();
+  }
+
+  function autoGrow(ta) {
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+  }
+
+  function beginEdit(ri, ci, initialChar) {
+    if (state.editing && (state.editing.r !== ri || state.editing.c !== ci)) commitEdit();
+    state.editing = { r: ri, c: ci, initial: initialChar !== undefined ? initialChar : state.rows[ri][ci] };
+    state.selection = { r1: ri, c1: ci, r2: ri, c2: ci };
+    state.activeCell = { r: ri, c: ci };
+    renderBody();
+  }
+  function commitEdit() {
+    if (!state.editing) return;
+    var ta = bodyRows.querySelector(".cell-edit");
+    var val = ta ? ta.value : state.editing.initial;
+    var r = state.editing.r, c = state.editing.c;
+    if (state.rows[r][c] !== val) {
+      pushUndo();
+      state.rows[r][c] = val;
+    }
+    state.editing = null;
+    renderBody();
+    focusClipHelper();
+  }
+  function cancelEdit() {
+    state.editing = null;
+    renderBody();
+    focusClipHelper();
+  }
+
+  function toggleRowSelect(ri) {
+    if (state.selectedRows.has(ri)) state.selectedRows.delete(ri);
+    else state.selectedRows.add(ri);
+    delRowBtn.disabled = state.selectedRows.size === 0;
+    if (state.headers.length) {
+      state.selection = { r1: ri, c1: 0, r2: ri, c2: state.headers.length - 1 };
+      state.activeCell = { r: ri, c: 0 };
+      focusClipHelper();
+    }
+    render();
+  }
+
+  function updateStats() {
+    var selLabel = "";
+    if (state.selection) {
+      var s = state.selection;
+      var rc = (s.r2 - s.r1 + 1), cc = (s.c2 - s.c1 + 1);
+      if (rc > 1 || cc > 1) selLabel = " · " + rc + "×" + cc + " selected";
+    }
+    statsLabel.textContent = state.rows.length + " rows × " + state.headers.length + " columns" +
+      (state.selectedRows.size ? " · " + state.selectedRows.size + " row(s) marked" : "") +
+      selLabel;
+  }
+
+  function updateSearch() {
+    var q = searchBox.value.trim();
+    if (!q) { searchCount.textContent = ""; return; }
+    var visibleRows = 0;
+    Array.prototype.forEach.call(bodyRows.children, function (tr) {
+      if (tr.style.display !== "none") visibleRows++;
+    });
+    searchCount.textContent = visibleRows + " match" + (visibleRows === 1 ? "" : "es");
+  }
+
+  // ---------- Grid shape helpers ----------
+  function ensureRowsCols(neededRows, neededCols) {
+    while (state.headers.length < neededCols) {
+      state.headers.push(colName(state.headers.length));
+      state.rows.forEach(function (r) { r.push(""); });
+    }
+    while (state.rows.length < neededRows) {
+      state.rows.push(state.headers.map(function () { return ""; }));
+    }
+  }
+
+  // ---------- Mutations ----------
+  function addRow() {
+    pushUndo();
+    state.rows.push(state.headers.map(function () { return ""; }));
+    render();
+  }
+  function addColumn() {
+    pushUndo();
+    state.headers.push(colName(state.headers.length));
+    state.rows.forEach(function (r) { r.push(""); });
+    render();
+  }
+  function deleteRow(ri) {
+    pushUndo();
+    state.rows.splice(ri, 1);
+    state.selectedRows.clear();
+    state.selection = null;
+    state.activeCell = null;
+    render();
+  }
+  function deleteSelectedRows() {
+    if (!state.selectedRows.size) return;
+    pushUndo();
+    var toDelete = Array.from(state.selectedRows).sort(function (a, b) { return b - a; });
+    toDelete.forEach(function (ri) { state.rows.splice(ri, 1); });
+    state.selectedRows.clear();
+    delRowBtn.disabled = true;
+    state.selection = null;
+    state.activeCell = null;
+    render();
+  }
+  function deleteColumn(ci) {
+    pushUndo();
+    state.headers.splice(ci, 1);
+    relabelHeaders();
+    state.rows.forEach(function (r) { r.splice(ci, 1); });
+    if (state.selectedCol === ci) state.selectedCol = -1;
+    delColBtn.disabled = true;
+    state.selection = null;
+    state.activeCell = null;
+    render();
+  }
+  function sortByColumn(ci) {
+    if (state.sortCol === ci) {
+      state.sortDir = -state.sortDir;
+    } else {
+      state.sortCol = ci;
+      state.sortDir = 1;
+    }
+    pushUndo();
+    var dir = state.sortDir;
+    state.rows.sort(function (a, b) {
+      var av = a[ci], bv = b[ci];
+      var an = parseFloat(av), bn = parseFloat(bv);
+      var bothNumeric = av !== "" && bv !== "" && !isNaN(an) && !isNaN(bn);
+      if (bothNumeric) return (an - bn) * dir;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" }) * dir;
+    });
+    state.selection = null;
+    state.activeCell = null;
+    render();
+  }
+  function clearSelectedCells() {
+    if (!state.selection) return;
+    pushUndo();
+    var s = state.selection;
+    for (var r = s.r1; r <= s.r2; r++) {
+      for (var c = s.c1; c <= s.c2; c++) state.rows[r][c] = "";
+    }
+    render();
+    focusClipHelper();
+  }
+
+  // ---------- Keyboard navigation (selection mode) ----------
+  function moveActiveCell(dr, dc, extend) {
+    if (!state.activeCell) {
+      if (!state.rows.length) return;
+      state.activeCell = { r: 0, c: 0 };
+      state.selection = { r1: 0, c1: 0, r2: 0, c2: 0 };
+      render();
+      focusClipHelper();
+      return;
+    }
+    if (!extend) {
+      var nr = Math.max(0, Math.min(state.rows.length - 1, state.activeCell.r + dr));
+      var nc = Math.max(0, Math.min(state.headers.length - 1, state.activeCell.c + dc));
+      state.activeCell = { r: nr, c: nc };
+      state.selection = { r1: nr, c1: nc, r2: nr, c2: nc };
+    } else {
+      var s = state.selection;
+      var freeR = s ? (s.r1 === state.activeCell.r ? s.r2 : s.r1) : state.activeCell.r;
+      var freeC = s ? (s.c1 === state.activeCell.c ? s.c2 : s.c1) : state.activeCell.c;
+      freeR = Math.max(0, Math.min(state.rows.length - 1, freeR + dr));
+      freeC = Math.max(0, Math.min(state.headers.length - 1, freeC + dc));
+      state.selection = normSel(state.activeCell, { r: freeR, c: freeC });
+    }
+    renderBody();
+    scrollActiveIntoView();
+    focusClipHelper();
+    updateStats();
+  }
+  function scrollActiveIntoView() {
+    if (!state.activeCell) return;
+    var td = bodyRows.querySelector('td[data-ri="' + state.activeCell.r + '"][data-ci="' + state.activeCell.c + '"]');
+    if (td) td.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  // ---------- Copy / Cut / Paste ----------
+  function buildTSV(sel) {
+    var lines = [];
+    for (var r = sel.r1; r <= sel.r2; r++) {
+      var cols = [];
+      for (var c = sel.c1; c <= sel.c2; c++) cols.push(state.rows[r][c] != null ? state.rows[r][c] : "");
+      lines.push(cols.join("\t"));
+    }
+    return lines.join("\n");
+  }
+  function applyPaste(text) {
+    var lines = text.replace(/\r/g, "").split("\n");
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    var grid = lines.map(function (line) { return line.split("\t"); });
+    var startR = state.selection ? state.selection.r1 : (state.activeCell ? state.activeCell.r : 0);
+    var startC = state.selection ? state.selection.c1 : (state.activeCell ? state.activeCell.c : 0);
+    var srcRows = grid.length;
+    var srcCols = grid.reduce(function (m, r) { return Math.max(m, r.length); }, 0);
+
+    var destR2, destC2;
+    var fillWholeSelection = srcRows === 1 && srcCols === 1 && state.selection &&
+      (state.selection.r2 > state.selection.r1 || state.selection.c2 > state.selection.c1);
+
+    pushUndo();
+    if (fillWholeSelection) {
+      var val = grid[0][0];
+      destR2 = state.selection.r2; destC2 = state.selection.c2;
+      for (var r = startR; r <= destR2; r++) {
+        for (var c = startC; c <= destC2; c++) state.rows[r][c] = val;
+      }
+    } else {
+      ensureRowsCols(startR + srcRows, startC + srcCols);
+      for (var i = 0; i < srcRows; i++) {
+        for (var j = 0; j < srcCols; j++) {
+          state.rows[startR + i][startC + j] = grid[i][j] !== undefined ? grid[i][j] : "";
+        }
+      }
+      destR2 = startR + srcRows - 1;
+      destC2 = startC + srcCols - 1;
+    }
+    state.selection = { r1: startR, c1: startC, r2: destR2, c2: destC2 };
+    state.activeCell = { r: startR, c: startC };
+    render();
+    focusClipHelper();
+    toast("Pasted");
+  }
+
+  clipHelper.addEventListener("copy", function (e) {
+    if (!state.selection) return;
+    e.clipboardData.setData("text/plain", buildTSV(state.selection));
+    e.preventDefault();
+  });
+  clipHelper.addEventListener("cut", function (e) {
+    if (!state.selection) return;
+    e.clipboardData.setData("text/plain", buildTSV(state.selection));
+    e.preventDefault();
+    clearSelectedCells();
+  });
+  clipHelper.addEventListener("paste", function (e) {
+    e.preventDefault();
+    var text = (e.clipboardData || window.clipboardData).getData("text/plain");
+    if (!text) return;
+    applyPaste(text);
+  });
+  clipHelper.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowDown") { e.preventDefault(); moveActiveCell(1, 0, e.shiftKey); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); moveActiveCell(-1, 0, e.shiftKey); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); moveActiveCell(0, -1, e.shiftKey); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); moveActiveCell(0, 1, e.shiftKey); }
+    else if (e.key === "Tab") { e.preventDefault(); moveActiveCell(0, e.shiftKey ? -1 : 1, false); }
+    else if (e.key === "Enter" || e.key === "F2") {
+      e.preventDefault();
+      if (state.activeCell) beginEdit(state.activeCell.r, state.activeCell.c);
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      e.preventDefault();
+      clearSelectedCells();
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (state.activeCell) {
+        e.preventDefault();
+        beginEdit(state.activeCell.r, state.activeCell.c, e.key);
+      }
+    }
+  });
+  document.addEventListener("mouseup", function () {
+    if (state.isMouseSelecting) {
+      state.isMouseSelecting = false;
+      document.body.classList.remove("selecting");
+    }
+    if (state.isFilling) {
+      finishFill();
+    }
+  });
+
+  // ---------- Export / Save ----------
+  async function exportCSV() {
+    var csv = toCSV(state.headers, state.rows, state.delimiter === "\t" ? "\t" : state.delimiter, state.hasHeader);
+    var blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    var suggestedName = state.fileName && /\.csv$/i.test(state.fileName) ? state.fileName : (state.fileName || "data") + ".csv";
+
+    if (window.showSaveFilePicker) {
+      try {
+        var handle = await window.showSaveFilePicker({
+          suggestedName: suggestedName,
+          types: [{ description: "CSV file", accept: { "text/csv": [".csv"] } }]
+        });
+        var writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        toast("Saved " + suggestedName);
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+      }
+    }
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    toast("Downloaded " + suggestedName);
+  }
+
+  // ---------- Wiring ----------
+  fileInput.addEventListener("change", function () {
+    var file = fileInput.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { loadText(reader.result, file.name); };
+    reader.readAsText(file);
+    fileInput.value = "";
+  });
+
+  addRowBtn.addEventListener("click", addRow);
+  addColBtn.addEventListener("click", addColumn);
+  delRowBtn.addEventListener("click", deleteSelectedRows);
+  delColBtn.addEventListener("click", function () {
+    if (state.selectedCol >= 0) deleteColumn(state.selectedCol);
+  });
+  undoBtn.addEventListener("click", undo);
+  exportBtn.addEventListener("click", exportCSV);
+  searchBox.addEventListener("input", function () { renderBody(); updateSearch(); });
+
+  function openPasteModal() { pasteModal.classList.add("open"); pasteArea.value = ""; pasteArea.focus(); }
+  function closePasteModal() { pasteModal.classList.remove("open"); }
+  pasteBtn.addEventListener("click", openPasteModal);
+  emptyPasteBtn.addEventListener("click", openPasteModal);
+  pasteCancel.addEventListener("click", closePasteModal);
+  pasteModal.addEventListener("click", function (e) { if (e.target === pasteModal) closePasteModal(); });
+  pasteLoad.addEventListener("click", function () {
+    var text = pasteArea.value;
+    if (!text.trim()) { toast("Paste some CSV text first"); return; }
+    closePasteModal();
+    loadText(text, "pasted.csv");
+  });
+
+  // drag & drop anywhere on the page (loading a file, not cell drag)
+  var dragCounter = 0;
+  window.addEventListener("dragenter", function (e) {
+    if (!e.dataTransfer || !Array.prototype.some.call(e.dataTransfer.types || [], function (t) { return t === "Files"; })) return;
+    e.preventDefault();
+    dragCounter++;
+    document.body.classList.add("dragging");
+  });
+  window.addEventListener("dragover", function (e) { e.preventDefault(); });
+  window.addEventListener("dragleave", function () {
+    dragCounter = Math.max(0, dragCounter - 1);
+    if (dragCounter === 0) document.body.classList.remove("dragging");
+  });
+  window.addEventListener("drop", function (e) {
+    e.preventDefault();
+    dragCounter = 0;
+    document.body.classList.remove("dragging");
+    var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { loadText(reader.result, file.name); };
+    reader.readAsText(file);
+  });
+
+  // global keyboard shortcuts
+  document.addEventListener("keydown", function (e) {
+    var mod = e.ctrlKey || e.metaKey;
+    var editingActive = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("cell-edit");
+    if (mod && e.key.toLowerCase() === "a" && !editingActive) {
+      var ae = document.activeElement;
+      var inTextField = ae && ae !== clipHelper && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable);
+      if (!inTextField && state.rows.length && state.headers.length) {
+        e.preventDefault();
+        state.selection = { r1: 0, c1: 0, r2: state.rows.length - 1, c2: state.headers.length - 1 };
+        if (!state.activeCell) state.activeCell = { r: 0, c: 0 };
+        applySelectionHighlight();
+        focusClipHelper();
+      }
+    }
+    if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); if (!exportBtn.disabled) exportCSV(); }
+    if (mod && e.key.toLowerCase() === "z" && !editingActive) { e.preventDefault(); if (!undoBtn.disabled) undo(); }
+  });
+})();
+</script>
+</body>
+</html>
